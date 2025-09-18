@@ -1,4 +1,4 @@
-A cross-platform **shared memory ring buffer** for inter-process communication (IPC).
+A cross-platform **lock-free shared memory ring buffer** for inter-process communication (IPC).
 
 - **Only DRAM**: no sockets, no disk files. On Windows it uses `CreateFileMappingW(INVALID_HANDLE_VALUE, ...)`.  
   On Linux/Unix it uses `/dev/shm` (tmpfs).  
