@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "sharedmem"
-version = "0.2.0"
+version = "0.3.1"
 dependencies = [
  "memmap2",
  "windows-sys",

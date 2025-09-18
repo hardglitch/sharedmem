@@ -1,7 +1,12 @@
 [package]
 name = "sharedmem"
-version = "0.2.0"
+version = "0.3.1"
 edition = "2024"
+description = "Cross-platform shared-memory ring buffer for request/response IPC without sockets or disk files. Uses CreateFileMappingW on Windows and /dev/shm (tmpfs) on Unix."
+license = "MIT"
+repository = "https://github.com/hardglitch/sharedmem"
+keywords = ["ipc", "shared-memory", "ring-buffer", "mmap", "multi-os"]
+categories = ["concurrency", "os", "data-structures"]
 
 [dependencies]
 memmap2 = "0.9"
