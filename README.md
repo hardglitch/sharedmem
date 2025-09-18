@@ -1,8 +1,8 @@
 A cross-platform **shared memory ring buffer** for inter-process communication (IPC).
 
-- **Only DRAM**: no sockets, no disk files. On Windows it uses `CreateFileMappingW(INVALID_HANDLE_VALUE, вЂ¦)`.  
+- **Only DRAM**: no sockets, no disk files. On Windows it uses `CreateFileMappingW(INVALID_HANDLE_VALUE, ...)`.  
   On Linux/Unix it uses `/dev/shm` (tmpfs).  
-- **Request/Response model**: designed for one writer в†” one reader with length-prefixed messages.  
+- **Request/Response model**: designed for one writer - one reader with length-prefixed messages.  
 - **Lock-free**: atomic read/write pointers, no mutexes.  
 - **Zero-copy slices**: payloads are written/read directly into memory with wraparound handling.  
 
