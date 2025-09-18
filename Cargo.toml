@@ -1,0 +1,16 @@
+[package]
+name = "sharedmem"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+memmap2 = "0.9"
+windows-sys = { version = "0.61", features = ["Win32", "Win32_System", "Win32_System_Memory", "Win32_Security"] }
+
+[[example]]
+name = "writer"
+path = "examples/writer.rs"
+
+[[example]]
+name = "reader"
+path = "examples/reader.rs"
