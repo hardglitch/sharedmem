@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(unix)]
 mod os {
-    use memmap2::{MmapMut, MmapOptions};
-    use std::fs::OpenOptions;
-    use std::io::Result;
-    use std::path::PathBuf;
+	use memmap2::MmapOptions;
+	use std::fs::OpenOptions;
+	use std::io::Result;
+	use std::path::PathBuf;
 
-    pub struct MmapMutWrapper {
+	pub struct MmapMutWrapper {
 		pub ptr: *mut u8,
 		pub size: usize,
 	}
@@ -18,7 +18,7 @@ mod os {
 		pub fn flush(&self) -> Result<()> { Ok(()) }
 	}
 
-	pub fn map_shared(name: &str, size: usize, create: bool) -> Result<MmapMut> {
+	pub fn map_shared(name: &str, size: usize, create: bool) -> Result<MmapMutWrapper> {
 		use std::os::unix::fs::OpenOptionsExt;
 		let mut path = PathBuf::from("/dev/shm");
 		path.push(name);
@@ -33,26 +33,28 @@ mod os {
 			f.set_len(size as u64)?;
 			// optional: remove the file, mapping stays valid
 			// std::fs::remove_file(&path)?;
-			unsafe { MmapOptions::new().len(size).map_mut(&f) }
+			let mm = unsafe { MmapOptions::new().len(size).map_mut(&f)? };
+			Ok(mm.into())
 		} else {
 			let f = OpenOptions::new().read(true).write(true).open(&path)?;
-			unsafe { MmapOptions::new().map_mut(&f) }
+			let mm = unsafe { MmapOptions::new().map_mut(&f)? };
+			Ok(mm.into())
 		}
 	}
 }
 
 #[cfg(windows)]
 mod os {
-    use std::ffi::OsStr;
-    use std::io::{Error, Result};
-    use std::os::windows::prelude::*;
-    use std::ptr;
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Memory::{
-        CreateFileMappingW, MapViewOfFile, OpenFileMappingW, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
-    };
+	use std::ffi::OsStr;
+	use std::io::{Error, Result};
+	use std::os::windows::prelude::*;
+	use std::ptr;
+	use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+	use windows_sys::Win32::System::Memory::{
+		CreateFileMappingW, MapViewOfFile, OpenFileMappingW, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
+	};
 
-    pub struct MmapMutWrapper {
+	pub struct MmapMutWrapper {
 		pub ptr: *mut u8,
 		pub size: usize,
 	}
