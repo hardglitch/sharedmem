@@ -4,14 +4,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(unix)]
 mod os {
-	use memmap2::MmapOptions;
+	use memmap2::{MmapMut, MmapOptions};
 	use std::fs::OpenOptions;
-	use std::io::Result;
+	use std::io::{Error, ErrorKind, Result, Write};
 	use std::path::PathBuf;
 
 	pub struct MmapMutWrapper {
 		pub ptr: *mut u8,
 		pub size: usize,
+		_mmap: MmapMut,
 	}
 
 	impl MmapMutWrapper {
@@ -23,23 +24,41 @@ mod os {
 		let mut path = PathBuf::from("/dev/shm");
 		path.push(name);
 
-		if create {
-			let f = OpenOptions::new()
-				.read(true)
-				.write(true)
-				.create(true)
-				.mode(0o600) // rw for owner only
-				.open(&path)?;
-			f.set_len(size as u64)?;
-			// optional: remove the file, mapping stays valid
-			// std::fs::remove_file(&path)?;
-			let mm = unsafe { MmapOptions::new().len(size).map_mut(&f)? };
-			Ok(mm.into())
-		} else {
-			let f = OpenOptions::new().read(true).write(true).open(&path)?;
-			let mm = unsafe { MmapOptions::new().map_mut(&f)? };
-			Ok(mm.into())
-		}
+		let mmap =
+			if create {
+				let mut f = OpenOptions::new()
+					.read(true)
+					.write(true)
+					.create(true)
+					.truncate(true)
+					.mode(0o600) // rw for owner only
+					.open(&path)?;
+
+				f.set_len(size as u64)?;
+				// optional: remove the file, mapping stays valid
+				std::fs::remove_file(&path)?;
+				unsafe { MmapOptions::new().map_mut(&f)? }
+			}
+			else {
+				let f = OpenOptions::new()
+					.read(true)
+					.write(true)
+					.open(&path)?;
+
+				let meta = f.metadata()?;
+				if meta.len() < size as u64 {
+					return Err(Error::new(
+						ErrorKind::Other,
+						format!("Shared file too small: {} bytes", meta.len()),
+					));
+				}
+				unsafe { MmapOptions::new().map_mut(&f)? }
+			};
+
+		let ptr = mmap.as_ptr() as *mut u8;
+		let size = mmap.len();
+
+		Ok(MmapMutWrapper { ptr, size, _mmap: mmap })
 	}
 }
 
@@ -141,15 +160,28 @@ impl SharedMem {
 		let header_ptr = ptr as *mut Header;
 		unsafe {
 			let header = &mut *header_ptr;
-			let cap = (mm.size - HEADER_SIZE) as u32;
+			let cap = mm.size - HEADER_SIZE;
+
 			if header.cap == 0 {
-				header.write_pos = AtomicU32::new(0);
-				header.read_pos = AtomicU32::new(0);
-				header.cap = cap;
+				header.write_pos.store(0, Ordering::Release);
+				header.read_pos.store(0, Ordering::Release);
+				header.cap = cap as u32;
 				header._reserved = 0;
 			}
-			let mm_size = mm.size;
-			Ok(Self { mm, header_ptr, data_ptr: ptr.add(HEADER_SIZE), cap: mm_size - HEADER_SIZE })
+
+			eprintln!("START header.cap={} write={} read={} cap={}",
+					  header.cap,
+					  header.write_pos.load(Ordering::Acquire),
+					  header.read_pos.load(Ordering::Acquire),
+					  cap
+			);
+
+			Ok(Self {
+				mm,
+				header_ptr,
+				data_ptr: ptr.add(HEADER_SIZE),
+				cap
+			})
 		}
 	}
 
@@ -158,9 +190,9 @@ impl SharedMem {
 	}
 
 	pub fn try_push(&mut self, payload: &[u8]) -> Result<()> {
-		let hdr = unsafe { &*self.header_ptr };
-		let w = hdr.write_pos.load(Ordering::Acquire);
-		let r = hdr.read_pos.load(Ordering::Acquire);
+		let header = unsafe { &*self.header_ptr };
+		let w = header.write_pos.load(Ordering::Acquire);
+		let r = header.read_pos.load(Ordering::Acquire);
 
 		let cap = self.cap as u32;
 		let need = 4u32 + payload.len() as u32;
@@ -173,38 +205,37 @@ impl SharedMem {
 		let data = self.data_slice_mut();
 
 		// write len (4 bytes) then payload using two-slice copy
-		let mut write_bytes = Vec::with_capacity(4 + payload.len());
+		let mut write_bytes = Vec::with_capacity(need as usize);
 		write_bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
 		write_bytes.extend_from_slice(payload);
 
-		let first = std::cmp::min(cap as usize - start, write_bytes.len()) as usize;
+		let first = std::cmp::min(cap as usize - start, write_bytes.len());
 		data[start..start + first].copy_from_slice(&write_bytes[..first]);
 		if first < write_bytes.len() {
 			let rest = write_bytes.len() - first;
 			data[..rest].copy_from_slice(&write_bytes[first..]);
 		}
 
-		hdr.write_pos.store(w + need, Ordering::Release);
+		header.write_pos.store(w + need, Ordering::Release);
 
 		self.mm.flush()?;
 		Ok(())
 	}
 
 	pub fn try_pop(&mut self) -> Option<Vec<u8>> {
-		let hdr = unsafe { &*self.header_ptr };
-		let w = hdr.write_pos.load(Ordering::Acquire);
-		let mut r = hdr.read_pos.load(Ordering::Acquire);
+		let header = unsafe { &*self.header_ptr };
+		let w = header.write_pos.load(Ordering::Acquire);
+		let mut r = header.read_pos.load(Ordering::Acquire);
 		if r == w { return None; }
 
-		let cap = self.cap as u32;
-		let cap_usize = self.cap;
+		let cap = self.cap;
 		let data = self.data_slice_mut();
-		let start = (r % cap) as usize;
+		let start = r as usize % cap;
 
 		// read 4-byte len safely (may wrap)
 		let mut len_bytes = [0u8;4];
 		for i in 0..4 {
-			len_bytes[i] = data[(start + i) % cap_usize];
+			len_bytes[i] = data[(start + i) % cap];
 		}
 		let len = u32::from_le_bytes(len_bytes) as usize;
 
@@ -213,16 +244,16 @@ impl SharedMem {
 		if available < 4 + len as u32 { return None; }
 
 		// read payload with two-slice copy
-		let payload_start = (start + 4) % cap_usize;
+		let payload_start = (start + 4) % cap;
 		let mut buf = vec![0u8; len];
-		let first = std::cmp::min(cap_usize - payload_start, len);
+		let first = std::cmp::min(cap - payload_start, len);
 		buf[..first].copy_from_slice(&data[payload_start..payload_start + first]);
 		if first < len {
 			buf[first..].copy_from_slice(&data[..(len - first)]);
 		}
 
 		r = r + 4 + len as u32;
-		hdr.read_pos.store(r, Ordering::Release);
+		header.read_pos.store(r, Ordering::Release);
 
 		Some(buf)
 	}

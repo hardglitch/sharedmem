@@ -8,8 +8,10 @@ repository = "https://github.com/hardglitch/sharedmem"
 keywords = ["ipc", "shared-memory", "ring-buffer", "mmap", "lock-free"]
 categories = ["concurrency", "os", "data-structures"]
 
-[dependencies]
+[target."cfg(unix)".dependencies]
 memmap2 = "0.9"
+
+[target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61", features = ["Win32", "Win32_System", "Win32_System_Memory", "Win32_Security"] }
 
 [[example]]
