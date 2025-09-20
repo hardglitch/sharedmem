@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 mod os {
 	use memmap2::{MmapMut, MmapOptions};
 	use std::fs::OpenOptions;
-	use std::io::{Error, ErrorKind, Result, Write};
+	use std::io::{Error, ErrorKind, Result};
+	use std::os::unix::fs::OpenOptionsExt;
 	use std::path::PathBuf;
 
 	pub struct MmapMutWrapper {
@@ -22,13 +23,12 @@ mod os {
 	}
 
 	pub fn map_shared(name: &str, size: usize, create: bool) -> Result<MmapMutWrapper> {
-		use std::os::unix::fs::OpenOptionsExt;
 		let mut path = PathBuf::from("/dev/shm");
 		path.push(name);
 
 		let mmap =
 			if create {
-				let mut f = OpenOptions::new()
+				let f = OpenOptions::new()
 					.read(true)
 					.write(true)
 					.create(true)
@@ -38,7 +38,7 @@ mod os {
 
 				f.set_len(size as u64)?;
 				// optional: remove the file, mapping stays valid
-				std::fs::remove_file(&path)?;
+				// std::fs::remove_file(&path)?;
 				unsafe { MmapOptions::new().map_mut(&f)? }
 			}
 			else {
@@ -71,17 +71,19 @@ mod os {
 	use std::os::windows::prelude::*;
 	use std::ptr;
 	use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-	use windows_sys::Win32::System::Memory::{
-		CreateFileMappingW, MapViewOfFile, OpenFileMappingW, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
-	};
+	use windows_sys::Win32::System::Memory::{CreateFileMappingW, MapViewOfFile, OpenFileMappingW, FILE_MAP_ALL_ACCESS, PAGE_READWRITE};
 
 	pub struct MmapMutWrapper {
 		pub ptr: *mut u8,
 		pub size: usize,
+		// hmap: HANDLE,
 	}
 
 	impl MmapMutWrapper {
-		pub fn flush(&self) -> Result<()> { Ok(()) } // Windows: optionally use FlushViewOfFile
+		pub fn flush(&self) -> Result<()> {
+			// optionally use FlushViewOfFile
+			Ok(())
+		}
 	}
 
 	pub fn map_shared(name: &str, size: usize, create: bool) -> Result<MmapMutWrapper> {
@@ -106,7 +108,11 @@ mod os {
 				CloseHandle(hmap);
 				return Err(Error::last_os_error());
 			}
-			Ok(MmapMutWrapper { ptr: addr.Value as usize as *mut u8, size })
+			Ok(MmapMutWrapper {
+				ptr: addr.Value as usize as *mut u8,
+				size,
+				// hmap,
+			})
 		}
 	}
 }
@@ -125,14 +131,19 @@ pub struct SharedMem {
 	header_ptr: *mut Header,
 	data_ptr: *mut u8,
 	cap: usize,
+	#[cfg(unix)]
+	fname: String,
 }
 
 impl SharedMem {
-	pub fn create_or_open(name: &str, size: usize) -> Result<Self> {
-		match Self::create(name, size) {
-			Ok(r) => Ok(r),
-			Err(_) => Self::open(name, size),
-		}
+	pub fn create(name: &str, size: usize) -> Result<Self> {
+		let mm = os::map_shared(name, size, true)?;
+		Self::from_mmap(mm, name)
+	}
+
+	pub fn open(name: &str, size: usize) -> Result<Self> {
+		let mm = os::map_shared(name, size, false)?;
+		Self::from_mmap(mm, name)
 	}
 
 	pub fn open_with_retry(name: &str, size: usize) -> Result<Self> {
@@ -140,24 +151,14 @@ impl SharedMem {
 			match Self::open(name, size) {
 				Ok(r) => return Ok(r),
 				Err(_) => {
-					std::thread::sleep(std::time::Duration::from_millis(50));
+					std::thread::sleep(std::time::Duration::from_millis(10));
 				}
 			}
 		}
 	}
 
-
-	fn create(name: &str, size: usize) -> Result<Self> {
-		let mm = os::map_shared(name, size, true)?;
-		Self::from_mmap(mm)
-	}
-
-	fn open(name: &str, size: usize) -> Result<Self> {
-		let mm = os::map_shared(name, size, false)?;
-		Self::from_mmap(mm)
-	}
-
-	fn from_mmap(mm: os::MmapMutWrapper) -> Result<Self> {
+	#[allow(unused_variables)]
+	fn from_mmap(mm: os::MmapMutWrapper, fname: &str) -> Result<Self> {
 		let ptr = mm.ptr;
 		let header_ptr = ptr as *mut Header;
 		unsafe {
@@ -182,7 +183,9 @@ impl SharedMem {
 				mm,
 				header_ptr,
 				data_ptr: ptr.add(HEADER_SIZE),
-				cap
+				cap,
+				#[cfg(unix)]
+				fname: fname.to_owned(),
 			})
 		}
 	}
@@ -274,5 +277,15 @@ impl SharedMem {
 			std::hint::spin_loop();
 			std::thread::yield_now();
 		}
+	}
+}
+#[cfg(unix)]
+impl Drop for SharedMem {
+	fn drop(&mut self) {
+		let _ = self.mm.flush();
+
+		let mut path = std::path::PathBuf::from("/dev/shm");
+		path.push(&self.fname);
+		let _ = std::fs::remove_file(&path);
 	}
 }
