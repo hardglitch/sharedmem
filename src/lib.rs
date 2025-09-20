@@ -12,11 +12,13 @@ mod os {
 	pub struct MmapMutWrapper {
 		pub ptr: *mut u8,
 		pub size: usize,
-		_mmap: MmapMut,
+		mmap: MmapMut,
 	}
 
 	impl MmapMutWrapper {
-		pub fn flush(&self) -> Result<()> { Ok(()) }
+		pub fn flush(&self) -> Result<()> {
+			self.mmap.flush()
+		}
 	}
 
 	pub fn map_shared(name: &str, size: usize, create: bool) -> Result<MmapMutWrapper> {
@@ -58,7 +60,7 @@ mod os {
 		let ptr = mmap.as_ptr() as *mut u8;
 		let size = mmap.len();
 
-		Ok(MmapMutWrapper { ptr, size, _mmap: mmap })
+		Ok(MmapMutWrapper { ptr, size, mmap })
 	}
 }
 
