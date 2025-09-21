@@ -1,6 +1,6 @@
-use sharedmem::Portal;
-use sharedmem::SharedChannel;
 use std::io::Result;
+use sharedmem::channel::SharedChannel;
+use sharedmem::portal::Portal;
 
 fn main() -> Result<()> {
     let portal = Portal::create()?;

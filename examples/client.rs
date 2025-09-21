@@ -1,12 +1,13 @@
-use sharedmem::{SharedChannel, Portal};
 use std::io::Result;
+use sharedmem::channel::SharedChannel;
+use sharedmem::portal::Portal;
 
 fn main() -> Result<()> {
     // open portal and announce
     let portal = Portal::open()?;
 
     std::thread::scope(|s| {
-        for _ in 0..2 {
+        for _ in 0..10 {
             let portal = portal.clone();
 
             s.spawn(|| {
