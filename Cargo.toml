@@ -1,6 +1,6 @@
 [package]
 name = "sharedmem"
-version = "0.3.1"
+version = "0.5.1"
 edition = "2024"
 description = "Cross-platform lock-free shared-memory ring buffer for request/response IPC without sockets or disk files. Uses CreateFileMappingW on Windows and /dev/shm (tmpfs) on Unix."
 license = "MIT"
@@ -10,14 +10,18 @@ categories = ["concurrency", "os", "data-structures"]
 
 [target."cfg(unix)".dependencies]
 memmap2 = "0.9"
+libc = "1.0.0-alpha.1"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61", features = ["Win32", "Win32_System", "Win32_System_Memory", "Win32_Security"] }
 
 [[example]]
-name = "writer"
-path = "examples/writer.rs"
+name = "server"
+path = "examples/server.rs"
 
 [[example]]
-name = "reader"
-path = "examples/reader.rs"
+name = "client"
+path = "examples/client.rs"
+
+[dependencies]
+rand = "0.10.0-rc.0"

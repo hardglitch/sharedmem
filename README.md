@@ -18,12 +18,11 @@ A cross-platform **lock-free shared memory ring buffer** for inter-process commu
 use sharedmem::SharedMem;
 
 fn main() -> std::io::Result<()> {
+    let mut request = SharedMem::create("request", 1 << 20)?; // 1MB
+    let mut response = SharedMem::create("response", 1 << 20)?; // 1MB
 
-    // Create shared memory 1 MB
-    let mut request = SharedMem::create_or_open("request", 1 << 20)?;
-    let mut response = SharedMem::create_or_open("response", 1 << 20)?;
+    request.try_push(b"Hello from Writer!")?;
 
-    request.try_push(b"Hello from writer!")?;
     loop {
         if let Some(data) = response.try_pop() {
             println!("Response: {}", String::from_utf8_lossy(&data));
@@ -34,21 +33,27 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 ```
+```
+cargo run --example writer
+```
 
 #### The second process
 ```rust
 use sharedmem::SharedMem;
 
 fn main() -> std::io::Result<()> {
-    let mut request = SharedMem::create_or_open("request", 1 << 20)?;
-    let mut response = SharedMem::create_or_open("response", 1 << 20)?;
+    let mut request = SharedMem::open_with_retry("request", 1 << 20)?; // 1MB
+    let mut response = SharedMem::open_with_retry("response", 1 << 20)?; // 1MB
 
     if let Some(data) = request.try_pop() {
         println!("Request: {}", String::from_utf8_lossy(&data));
-        response.try_push(&data)?;
+        response.try_push(b"Hello from Reader!")?;
     }
     else { println!("Nothing"); }
 
     Ok(())
 }
+```
+```
+cargo run --example reader
 ```
